@@ -13,6 +13,7 @@ It includes:
 - Use responsibly and comply with any policies/laws that apply to your use case.
 - **Do not share your cookies**. Treat them like passwords.
 - `config.json` is ignored by git (see `.gitignore`). Keep it that way.
+- Note: Consider using a **temporary/secondary LinkedIn account** for scraping, since accounts can be restricted. In my own testing, I scraped **12,000+ profiles over ~4 days** (with reasonable delays) without an immediate restriction, but the account was restricted **a few days later**.
 
 ## Requirements
 
@@ -84,6 +85,12 @@ Bulk scrape with anti-detection style delays + resume/progress tracking:
 
 ```bash
 python bulk_scraper.py --config config.json --input profiles_to_scrape.txt --output output
+```
+
+Sample command with tuned delays and batch size:
+
+```bash
+python bulk_scraper.py -c config.json -i profiles_to_scrape.txt -o output --batch-size 20 --min-delay 3 --max-delay 10
 ```
 
 Common options:

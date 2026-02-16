@@ -1,0 +1,86 @@
+{
+  "linkedinUrl": "https://www.linkedin.com/in/williamhgates",
+  "publicIdentifier": "williamhgates",
+  "firstName": "Bill",
+  "lastName": "Gates",
+  "fullName": "Bill Gates",
+  "headline": "Chair, Gates Foundation and Founder, Breakthrough Energy",
+  "summary": "Chair of the Gates Foundation. Founder of Breakthrough Energy. Co-founder of Microsoft. Voracious reader. Avid traveler. Active blogger.",
+  "location": null,
+  "country": null,
+  "industryName": "Philanthropy",
+  "experiencesCount": 3,
+  "experiences": [
+    {
+      "title": "Co-chair",
+      "companyName": "Gates Foundation",
+      "companyUrn": "urn:li:fsd_company:8736",
+      "companyId": "8736",
+      "companyLinkedinUrl": "https://www.linkedin.com/company/8736/",
+      "companyIndustry": "Non-profit Organization Management",
+      "location": null,
+      "description": null,
+      "startDate": "2000",
+      "endDate": null,
+      "isCurrentRole": true
+    },
+    {
+      "title": "Founder",
+      "companyName": "Breakthrough Energy ",
+      "companyUrn": "urn:li:fsd_company:19141006",
+      "companyId": "19141006",
+      "companyLinkedinUrl": "https://www.linkedin.com/company/19141006/",
+      "companyIndustry": "Management Consulting",
+      "location": null,
+      "description": null,
+      "startDate": "2015",
+      "endDate": null,
+      "isCurrentRole": true
+    },
+    {
+      "title": "Co-founder",
+      "companyName": "Microsoft",
+      "companyUrn": "urn:li:fsd_company:1035",
+      "companyId": "1035",
+      "companyLinkedinUrl": "https://www.linkedin.com/company/1035/",
+      "companyIndustry": "Computer Software",
+      "location": null,
+      "description": null,
+      "startDate": "1975",
+      "endDate": null,
+      "isCurrentRole": true
+    }
+  ],
+  "educationsCount": 2,
+  "educations": [
+    {
+      "schoolName": "Harvard University",
+      "schoolUrn": "urn:li:fsd_school:18483",
+      "schoolId": "18483",
+      "schoolLinkedinUrl": "https://www.linkedin.com/school/18483/",
+      "degreeName": null,
+      "fieldOfStudy": null,
+      "description": null,
+      "grade": null,
+      "activities": null,
+      "startDate": "1973",
+      "endDate": "1975"
+    },
+    {
+      "schoolName": "Lakeside School",
+      "schoolUrn": "urn:li:fsd_school:3164077",
+      "schoolId": "3164077",
+      "schoolLinkedinUrl": "https://www.linkedin.com/school/3164077/",
+      "degreeName": null,
+      "fieldOfStudy": null,
+      "description": null,
+      "grade": null,
+      "activities": null,
+      "startDate": null,
+      "endDate": null
+    }
+  ],
+  "skills": [],
+  "certifications": [],
+  "languages": []
+}
