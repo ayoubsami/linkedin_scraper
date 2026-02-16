@@ -1,0 +1,6 @@
+# LinkedIn Profile URLs to scrape
+# One URL or username per line
+# Lines starting with # are comments
+# https://linkedin.com/in/williamhgates
+# https://linkedin.com/in/satlouis
+# Add more profiles below...

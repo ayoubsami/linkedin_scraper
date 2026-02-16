@@ -1,0 +1,5 @@
+.DS_Store
+*pycache*
+config.json
+
+output/
