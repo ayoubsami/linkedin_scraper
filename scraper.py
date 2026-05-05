@@ -5,11 +5,18 @@ Uses LinkedIn's Voyager API with cookie-based authentication.
 """
 
 import json
+import logging
+import os
+import random
 import re
 import sys
+import time
+from typing import Optional, Tuple
+
 import requests
-from typing import Optional
+from requests.adapters import HTTPAdapter
 from requests.cookies import RequestsCookieJar
+from urllib3.util.retry import Retry
 
 
 # API Configuration
@@ -18,12 +25,32 @@ API_BASE_URL = f"{LINKEDIN_BASE_URL}/voyager/api"
 PROFILE_ENDPOINT = "/identity/dash/profiles"
 DECORATION_ID = "com.linkedin.voyager.dash.deco.identity.profile.FullProfileWithEntities-109"
 
+# Request timeouts: (connect seconds, read seconds)
+_CONNECT_TIMEOUT = 10.0
+_READ_TIMEOUT = 30.0
+
 REQUEST_HEADERS = {
     "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "accept-language": "en-US,en;q=0.9",
     "x-li-lang": "en_US",
     "x-restli-protocol-version": "2.0.0",
 }
+
+log = logging.getLogger(__name__)
+
+
+def _cookie_dict(jar: requests.cookies.RequestsCookieJar) -> dict:
+    """Return a stable name→value snapshot of a cookie jar for diffing."""
+    return {c.name: c.value for c in jar}
+
+
+def _redact(value: str, keep: int = 6) -> str:
+    """Partially redact a sensitive string for logging."""
+    if not value:
+        return value
+    if len(value) < keep:
+        return value
+    return value[:keep] + "…" + value[-2:]
 
 
 def extract_public_id(url_or_id: str) -> str:
@@ -135,32 +162,142 @@ def parse_education(education: dict) -> dict:
 class LinkedInScraper:
     """LinkedIn profile scraper using Voyager API."""
 
-    def __init__(self, li_at_cookie: str, jsessionid_cookie: str):
+    def __init__(
+        self,
+        li_at_cookie: str,
+        jsessionid_cookie: str,
+        *,
+        debug: bool = False,
+        jitter_sleep_range: Tuple[float, float] = (0.0, 0.0),
+        max_retries: int = 5,
+        backoff_factor: float = 0.8,
+    ):
         """
         Initialize scraper with LinkedIn session cookies.
 
         Args:
             li_at_cookie: The 'li_at' cookie value from your browser
             jsessionid_cookie: The 'JSESSIONID' cookie value from your browser
+            debug: Enable verbose logging of retries, cookies diffs, and CSRF token.
+                   Can also be enabled via the LINKEDIN_DEBUG=1 environment variable.
+            jitter_sleep_range: (min, max) seconds to sleep before each request to
+                                 reduce rate-limit / anti-bot triggers.  E.g. (1.0, 3.0).
+            max_retries: Total retry attempts for transient network / 5xx errors.
+            backoff_factor: Exponential backoff multiplier between retries.
         """
-        self.session = requests.Session()
+        self.debug = debug or (os.getenv("LINKEDIN_DEBUG", "0") == "1")
+        self.jitter_sleep_range = jitter_sleep_range
 
-        # Set up cookies
+        self.session = self._build_session(max_retries, backoff_factor)
+
+        # Seed cookies once from the supplied credentials.
+        # From here on the session cookie jar is updated automatically by
+        # every Set-Cookie response header — we never overwrite it manually.
         cookies = RequestsCookieJar()
         cookies.set('li_at', li_at_cookie, domain='.linkedin.com', path='/')
         jsessionid_clean = jsessionid_cookie.strip('"')
         cookies.set('JSESSIONID', f'"{jsessionid_clean}"', domain='.linkedin.com', path='/')
-        self.session.cookies = cookies
+        self.session.cookies.update(cookies)
 
-        # Set up headers
-        headers = REQUEST_HEADERS.copy()
-        headers['csrf-token'] = jsessionid_clean
-        self.session.headers.update(headers)
+        # Set base headers (csrf-token will be refreshed before each request)
+        self.session.headers.update(REQUEST_HEADERS)
+
+    @staticmethod
+    def _build_session(max_retries: int, backoff_factor: float) -> requests.Session:
+        """Create a requests.Session with retry/backoff and keep-alive pool."""
+        session = requests.Session()
+
+        retry = Retry(
+            total=max_retries,
+            connect=max_retries,
+            read=max_retries,
+            status=max_retries,
+            backoff_factor=backoff_factor,
+            status_forcelist=(429, 500, 502, 503, 504),
+            allowed_methods=("GET",),
+            raise_on_status=False,
+            respect_retry_after_header=True,
+        )
+        adapter = HTTPAdapter(
+            max_retries=retry,
+            pool_connections=10,
+            pool_maxsize=10,
+        )
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
+        return session
+
+    def _sync_csrf_token(self) -> None:
+        """
+        Keep the csrf-token request header in sync with the current JSESSIONID cookie.
+
+        LinkedIn expects csrf-token == JSESSIONID value (without surrounding quotes).
+        This must be called before every outgoing request so that cookie rotations
+        performed by a previous Set-Cookie response are reflected immediately.
+        """
+        jsessionid = self.session.cookies.get("JSESSIONID")
+        if jsessionid:
+            csrf = jsessionid.strip('"')
+            self.session.headers["csrf-token"] = csrf
+            if self.debug:
+                log.debug("csrf-token synced → %s", _redact(csrf))
 
     def _fetch(self, endpoint: str, params: dict = None) -> dict:
-        """Make a GET request to LinkedIn API."""
+        """
+        Make a GET request to the LinkedIn Voyager API.
+
+        Cookie update point
+        -------------------
+        requests.Session automatically merges every Set-Cookie response header
+        into self.session.cookies *immediately after* session.get() returns.
+        The cookie-diff log below captures exactly which cookies changed.
+        """
         url = f"{API_BASE_URL}{endpoint}"
-        res = self.session.get(url, params=params)
+
+        # Optional jitter to reduce rate-limit / anti-bot triggers
+        lo, hi = self.jitter_sleep_range
+        if hi > 0 and 0 <= lo <= hi:
+            time.sleep(random.uniform(lo, hi))
+
+        # Sync csrf-token with the most up-to-date JSESSIONID before sending
+        self._sync_csrf_token()
+
+        # Snapshot cookies BEFORE the request (connection resets happen here;
+        # we still want to log the pre-request state)
+        before = _cookie_dict(self.session.cookies)
+
+        if self.debug:
+            log.debug("GET %s", url)
+            if "JSESSIONID" in before:
+                log.debug("pre-request JSESSIONID=%s", _redact(before["JSESSIONID"]))
+
+        try:
+            # Do NOT pass cookies= kwarg — let the session manage the jar.
+            res = self.session.get(
+                url,
+                params=params,
+                timeout=(_CONNECT_TIMEOUT, _READ_TIMEOUT),
+            )
+        except requests.RequestException as exc:
+            # Connection reset (and other transport errors) land here.
+            # There is no response, so no Set-Cookie to apply for this attempt.
+            log.warning("request failed: %r", exc)
+            raise
+
+        # ← Cookie update has already happened here (requests merged Set-Cookie).
+        after = _cookie_dict(self.session.cookies)
+
+        if self.debug:
+            changed = {
+                k: (before.get(k), after.get(k))
+                for k in set(before) | set(after)
+                if before.get(k) != after.get(k)
+            }
+            if changed:
+                log.debug(
+                    "cookies changed via Set-Cookie → %s",
+                    {k: (_redact(v0 or ""), _redact(v1 or "")) for k, (v0, v1) in changed.items()},
+                )
 
         if res.status_code != 200:
             raise Exception(f"API request failed with status {res.status_code}: {res.text[:200]}")
@@ -266,20 +403,34 @@ class LinkedInScraper:
         return result
 
 
-def create_api_with_cookie(li_at_cookie: str, jsessionid_cookie: str = None) -> LinkedInScraper:
+def create_api_with_cookie(
+    li_at_cookie: str,
+    jsessionid_cookie: str = None,
+    *,
+    debug: bool = False,
+    jitter_sleep_range: Tuple[float, float] = (0.0, 0.0),
+) -> LinkedInScraper:
     """
     Create LinkedIn scraper instance using session cookies.
 
     Args:
         li_at_cookie: The 'li_at' cookie value from your browser
         jsessionid_cookie: The 'JSESSIONID' cookie value from your browser
+        debug: Enable verbose logging (retries, cookie diffs, csrf-token).
+               Also enabled by the LINKEDIN_DEBUG=1 environment variable.
+        jitter_sleep_range: (min_sec, max_sec) random sleep before each request.
 
     Returns:
         LinkedInScraper instance
     """
     if not jsessionid_cookie:
         raise ValueError("JSESSIONID cookie is required")
-    return LinkedInScraper(li_at_cookie, jsessionid_cookie)
+    return LinkedInScraper(
+        li_at_cookie,
+        jsessionid_cookie,
+        debug=debug,
+        jitter_sleep_range=jitter_sleep_range,
+    )
 
 
 def scrape_profile(api: LinkedInScraper, profile_url_or_id: str) -> dict:

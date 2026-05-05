@@ -128,6 +128,52 @@ python remove_failed_interactive.py --progress output/progress.json --profiles p
 - **“Session is not valid” / 401 / 403**: cookies are missing or expired; re-copy `li_at` + `JSESSIONID`.
 - **429 / rate limited**: bulk mode already sleeps longer on rate limits. Reduce speed further by increasing delays and batch breaks.
 - **Some profiles “restricted”**: private or blocked profiles can fail even with valid cookies.
+- **`Connection reset by peer` (104)**: transient network issue. The scraper now retries automatically (up to 5 times with exponential backoff) for connection errors and 429/5xx responses. If it persists, try adding jitter (see below).
+
+## Dynamic cookies and session management
+
+The scraper uses a single persistent `requests.Session` throughout all requests.
+LinkedIn often rotates cookies via `Set-Cookie` response headers — the session captures
+these automatically after every response, and the `csrf-token` request header is re-synced
+with the current `JSESSIONID` value before each outgoing request.
+
+You do **not** need to restart the scraper or manually update cookies between profile fetches.
+
+## Debug logging
+
+Enable verbose logging to see retries, csrf-token values, and cookie diffs:
+
+```bash
+# via environment variable (works with both cli.py and bulk_scraper.py)
+LINKEDIN_DEBUG=1 python cli.py --config config.json
+
+# via CLI flag (cli.py)
+python cli.py --config config.json --debug
+
+# via CLI flag (bulk_scraper.py)
+python bulk_scraper.py --config config.json --input urls.txt --debug
+```
+
+Sample debug output:
+
+```
+DEBUG scraper: csrf-token synced → ajax:1…id
+DEBUG scraper: GET https://www.linkedin.com/voyager/api/identity/dash/profiles
+DEBUG scraper: pre-request JSESSIONID="ajax:1…id"
+DEBUG scraper: cookies changed via Set-Cookie → {'JSESSIONID': ('"ajax:1…9"', '"ajax:9…9"')}
+```
+
+## Jitter between requests
+
+Add a random delay between each request to reduce rate-limiting / anti-bot triggers:
+
+```bash
+# cli.py — 1–3 seconds random sleep before each profile fetch
+python cli.py --config config.json --jitter 1 3
+
+# bulk_scraper.py — same flag; stacks on top of the existing bulk delays
+python bulk_scraper.py --config config.json --input urls.txt --jitter 1 3
+```
 
 ## Project structure (quick tour)
 
