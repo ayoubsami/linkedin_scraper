@@ -160,7 +160,16 @@ class LinkedInScraper:
     def _fetch(self, endpoint: str, params: dict = None) -> dict:
         """Make a GET request to LinkedIn API."""
         url = f"{API_BASE_URL}{endpoint}"
-        res = self.session.get(url, params=params)
+        try:
+            res = self.session.get(url, params=params, allow_redirects=False)
+        except requests.exceptions.TooManyRedirects as exc:
+            raise Exception("Session invalid or checkpoint (too many redirects). Check cookies.") from exc
+
+        if res.is_redirect or res.status_code in (301, 302, 303, 307, 308):
+            location = res.headers.get("Location", "")
+            raise Exception(
+                f"Session invalid or checkpoint (redirected to {location}). Check cookies."
+            )
 
         if res.status_code != 200:
             raise Exception(f"API request failed with status {res.status_code}: {res.text[:200]}")
