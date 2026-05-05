@@ -10,12 +10,12 @@ import time
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 from scraper import LinkedInScraper, extract_public_id
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG if os.getenv("LINKEDIN_DEBUG", "0") == "1" else logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler('scraper.log'),
@@ -163,7 +163,9 @@ def bulk_scrape(
     jsessionid_cookie: str,
     profile_urls: list[str],
     output_dir: str = None,
-    resume: bool = True
+    resume: bool = True,
+    debug: bool = False,
+    jitter_sleep_range: Tuple[float, float] = (0.0, 0.0),
 ) -> dict:
     """
     Bulk scrape LinkedIn profiles with anti-detection measures.
@@ -174,6 +176,9 @@ def bulk_scrape(
         profile_urls: List of profile URLs or public IDs to scrape
         output_dir: Output directory for results
         resume: Whether to resume from previous progress
+        debug: Enable verbose debug logging (also via LINKEDIN_DEBUG=1)
+        jitter_sleep_range: (min_sec, max_sec) random sleep injected inside
+                            each _fetch() call, before bulk_scraper's own delay.
 
     Returns:
         Dictionary with results and statistics
@@ -232,7 +237,12 @@ def bulk_scrape(
 
     # Initialize scraper
     logger.info("Initializing LinkedIn session...")
-    scraper = LinkedInScraper(li_at_cookie, jsessionid_cookie)
+    scraper = LinkedInScraper(
+        li_at_cookie,
+        jsessionid_cookie,
+        debug=debug,
+        jitter_sleep_range=jitter_sleep_range,
+    )
 
     # Verify session
     if not check_session_health(scraper):
@@ -336,8 +346,24 @@ def main():
     parser.add_argument('--min-delay', type=float, help='Minimum delay between requests (seconds)')
     parser.add_argument('--max-delay', type=float, help='Maximum delay between requests (seconds)')
     parser.add_argument('--batch-size', type=int, help='Profiles per batch before long break')
+    parser.add_argument(
+        '--debug',
+        action='store_true',
+        default=False,
+        help='Enable verbose debug logging (retries, cookie diffs, csrf-token). Also via LINKEDIN_DEBUG=1.',
+    )
+    parser.add_argument(
+        '--jitter',
+        type=float,
+        nargs=2,
+        metavar=('MIN', 'MAX'),
+        default=None,
+        help='Extra random sleep (seconds) inside each request, e.g. --jitter 1 3',
+    )
 
     args = parser.parse_args()
+
+    debug = args.debug or (os.getenv("LINKEDIN_DEBUG", "0") == "1")
 
     # Load config
     with open(args.config, 'r') as f:
@@ -366,13 +392,17 @@ def main():
     if args.batch_size:
         ScraperConfig.BATCH_SIZE = args.batch_size
 
+    jitter = tuple(args.jitter) if args.jitter else (0.0, 0.0)
+
     # Run scraper
     bulk_scrape(
         li_at_cookie=li_at,
         jsessionid_cookie=jsessionid,
         profile_urls=profile_urls,
         output_dir=args.output,
-        resume=not args.no_resume
+        resume=not args.no_resume,
+        debug=debug,
+        jitter_sleep_range=jitter,
     )
 
 

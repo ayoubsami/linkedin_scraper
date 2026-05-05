@@ -9,6 +9,7 @@ Usage:
 
 import argparse
 import json
+import logging
 import os
 import sys
 from pathlib import Path
@@ -71,8 +72,32 @@ To get your li_at cookie:
         default=True,
         help='Pretty print JSON output (default: True)'
     )
+    parser.add_argument(
+        '--debug',
+        action='store_true',
+        default=False,
+        help=(
+            'Enable verbose debug logging (retries, cookie diffs, csrf-token). '
+            'Also enabled by setting LINKEDIN_DEBUG=1.'
+        )
+    )
+    parser.add_argument(
+        '--jitter',
+        type=float,
+        nargs=2,
+        metavar=('MIN', 'MAX'),
+        default=None,
+        help='Random sleep range (seconds) between requests, e.g. --jitter 1 3'
+    )
 
     args = parser.parse_args()
+
+    # Configure logging
+    debug = args.debug or (os.environ.get("LINKEDIN_DEBUG", "0") == "1")
+    logging.basicConfig(
+        level=logging.DEBUG if debug else logging.WARNING,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
 
     # Load config from file if provided
     if args.config:
@@ -112,8 +137,9 @@ To get your li_at cookie:
     profiles = list(dict.fromkeys(profiles))
 
     print(f"Authenticating with LinkedIn...")
+    jitter = tuple(args.jitter) if args.jitter else (0.0, 0.0)
     try:
-        api = create_api_with_cookie(cookie, jsessionid)
+        api = create_api_with_cookie(cookie, jsessionid, debug=debug, jitter_sleep_range=jitter)
     except Exception as e:
         print(f"Authentication failed: {e}")
         sys.exit(1)
