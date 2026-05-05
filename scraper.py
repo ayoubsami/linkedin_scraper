@@ -5,11 +5,14 @@ Uses LinkedIn's Voyager API with cookie-based authentication.
 """
 
 import json
+import logging
 import re
 import sys
 import requests
 from typing import Optional
 from requests.cookies import RequestsCookieJar
+
+logger = logging.getLogger(__name__)
 
 
 # API Configuration
@@ -157,10 +160,57 @@ class LinkedInScraper:
         headers['csrf-token'] = jsessionid_clean
         self.session.headers.update(headers)
 
+        # Snapshot of cookie names→values used to detect Set-Cookie updates
+        self._prev_cookies: dict = {c.name: c.value for c in self.session.cookies}
+
+    def _sync_csrf_token(self) -> None:
+        """Keep the csrf-token request header in sync with the current JSESSIONID cookie.
+
+        LinkedIn's Voyager API expects the csrf-token header to equal the
+        JSESSIONID cookie value with surrounding quotes stripped.  This must be
+        called before every request so that a server-rotated JSESSIONID is
+        reflected in the header.
+        """
+        jsessionid = self.session.cookies.get('JSESSIONID')
+        if jsessionid:
+            self.session.headers.update({'csrf-token': jsessionid.strip('"')})
+
     def _fetch(self, endpoint: str, params: dict = None) -> dict:
-        """Make a GET request to LinkedIn API."""
+        """Make a GET request to LinkedIn API.
+
+        The session automatically merges any Set-Cookie headers from the
+        response into the cookie jar.  After each response we diff the jar
+        against the previous snapshot so we can log changes and keep
+        csrf-token in sync with any updated JSESSIONID.
+        """
         url = f"{API_BASE_URL}{endpoint}"
+
+        # Sync csrf-token with the current JSESSIONID before sending the request
+        self._sync_csrf_token()
+
         res = self.session.get(url, params=params)
+
+        # requests.Session has already merged Set-Cookie into self.session.cookies.
+        # Only diff the jar when the response actually carried Set-Cookie headers
+        # (res.cookies is non-empty), then re-sync csrf-token if JSESSIONID rotated.
+        if res.cookies:
+            current_cookies = {c.name: c.value for c in self.session.cookies}
+            if current_cookies != self._prev_cookies:
+                changed_keys = [
+                    k for k in current_cookies
+                    if self._prev_cookies.get(k) != current_cookies[k]
+                ]
+                new_keys = [k for k in current_cookies if k not in self._prev_cookies]
+                logger.debug(
+                    "[cookie update] Cookies changed after %s — updated: %s, new: %s",
+                    endpoint, changed_keys, new_keys,
+                )
+                self._prev_cookies = current_cookies
+
+                if 'JSESSIONID' in changed_keys:
+                    # JSESSIONID was rotated by the server; keep csrf-token in sync
+                    self._sync_csrf_token()
+                    logger.debug("[cookie update] csrf-token synced to new JSESSIONID")
 
         if res.status_code != 200:
             raise Exception(f"API request failed with status {res.status_code}: {res.text[:200]}")
